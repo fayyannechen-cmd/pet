@@ -26,6 +26,64 @@
   </style>
 </head>
 <body>
-  <img id="pet" src="assets/little-mao-puppy/frames/wave/01.png" alt="pet" />
+  <img id="pet" alt="pet" />
+
+  <script>
+    const BASE = 'assets/little-mao-puppy/frames';
+
+    // 每个动作 = 一组连续帧 + 播放速度
+    const CLIPS = {
+      idle: {   // 待机：原地挠痒
+        frames: ['scratch/01.png','scratch/02.png','scratch/03.png','scratch/04.png','scratch/05.png','scratch/06.png'],
+        fps: 8,
+      },
+      walk: {   // 走路
+        frames: ['walk/01.png','walk/02.png','walk/03.png','walk/04.png','walk/05.png','walk/06.png','walk/07.png','walk/08.png'],
+        fps: 10,
+      },
+    };
+
+    const petImg = document.getElementById('pet');
+
+    // 预加载所有帧，避免切换时闪烁
+    for (const clip of Object.values(CLIPS)) {
+      for (const f of clip.frames) {
+        const img = new Image();
+        img.src = `${BASE}/${f}`;
+      }
+    }
+
+    let currentClip = 'idle';
+    let frameIndex = 0;
+    let timer = null;
+
+    function startClip(name) {
+      const clip = CLIPS[name];
+      if (!clip) return;
+      currentClip = name;
+      frameIndex = 0;
+      petImg.src = `${BASE}/${clip.frames[0]}`;
+
+      if (timer) clearInterval(timer);
+      timer = setInterval(() => {
+        frameIndex = (frameIndex + 1) % clip.frames.length;   // 无限循环
+        petImg.src = `${BASE}/${clip.frames[frameIndex]}`;
+      }, 1000 / clip.fps);
+    }
+
+    // facing: 1=朝右(原图), -1=朝左(水平翻转)
+    function setFacing(facing) {
+      petImg.style.transform = facing === -1 ? 'scaleX(-1)' : 'scaleX(1)';
+    }
+
+    // 听主进程的指令
+    window.petAPI.onState((state) => {
+      if (state.facing !== undefined) setFacing(state.facing);
+      if (state.clip && state.clip !== currentClip) startClip(state.clip);
+    });
+
+    // 还没收到指令前，先默认待机
+    startClip('idle');
+  </script>
 </body>
 </html>
