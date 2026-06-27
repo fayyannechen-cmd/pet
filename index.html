@@ -76,9 +76,20 @@
       petImg.style.transform = facing === -1 ? 'scaleX(-1)' : 'scaleX(1)';
     }
 
+    let paused = false;
+    function setPaused(p) {
+      paused = p;
+      if (p) {
+        if (timer) { clearInterval(timer); timer = null; }   // 冻结在当前帧
+      } else {
+        startClip(currentClip);                              // 恢复播放
+      }
+    }
+
     window.petAPI.onState((state) => {
       if (state.facing !== undefined) setFacing(state.facing);
-      if (state.clip && state.clip !== currentClip) startClip(state.clip);
+      if (state.paused !== undefined) setPaused(state.paused);
+      if (state.clip && state.clip !== currentClip && !paused) startClip(state.clip);
     });
 
     startClip('idle');
@@ -124,6 +135,13 @@
       if (!dragging) return;
       dragging = false;
       window.petAPI.endDrag();
+    });
+
+    // 右键点在身体上 -> 弹出原生菜单
+    window.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!isOverBody(e.clientX, e.clientY)) return;
+      window.petAPI.openMenu();
     });
   </script>
 </body>

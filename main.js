@@ -1,11 +1,15 @@
-const { app, BrowserWindow, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Menu } = require('electron');
 const path = require('path');
 
 let win;
 let startPos = { x: 0, y: 0 };   // 桌宠的"家"，走完要回到这里
 let dragging = false;            // 是否正在被拖动（拖动时暂停自动走路）
+let paused = false;              // 是否被手动暂停（动画 + 走路都冻结）
 let dragOffset = { x: 0, y: 0 }; // 鼠标点和窗口左上角的固定偏移
 let dragTimer = null;
+
+let bubbleWin = null;            // "打招呼"用的气泡窗口
+let bubbleTimer = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -41,6 +45,68 @@ function createWindow() {
   win.webContents.on('did-finish-load', behaviorLoop);
 }
 
+// 冻结/恢复（动画交给画面，走路在 behaviorLoop 里）
+function setPaused(p) {
+  paused = p;
+  sendState({ paused: p });
+}
+
+// ---- 右键原生菜单 ----
+function popupMenu() {
+  if (!win || win.isDestroyed()) return;
+  const menu = Menu.buildFromTemplate([
+    { label: '打招呼', click: () => showGreeting('你好呀') },
+    { label: paused ? '继续' : '暂停', click: () => setPaused(!paused) },
+    { type: 'separator' },
+    { label: '退出', click: () => app.quit() },
+  ]);
+  menu.popup({ window: win });
+}
+
+// ---- "打招呼"气泡窗口 ----
+function ensureBubble() {
+  if (bubbleWin && !bubbleWin.isDestroyed()) return;
+  bubbleWin = new BrowserWindow({
+    width: 220,
+    height: 90,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    focusable: false,            // 不抢焦点
+    webPreferences: {
+      preload: path.join(__dirname, 'bubble-preload.js'),
+    },
+  });
+  bubbleWin.setIgnoreMouseEvents(true);   // 气泡不挡鼠标
+  bubbleWin.loadFile('bubble.html');
+}
+
+function showGreeting(text) {
+  if (!win || win.isDestroyed()) return;
+  ensureBubble();
+
+  // 摆在桌宠正上方
+  const [px, py] = win.getPosition();
+  const bw = 220;
+  bubbleWin.setPosition(Math.round(px + 80 - bw / 2), Math.round(py - 30));
+
+  const send = () => bubbleWin.webContents.send('bubble-text', text);
+  if (bubbleWin.webContents.isLoading()) {
+    bubbleWin.webContents.once('did-finish-load', send);
+  } else {
+    send();
+  }
+  bubbleWin.showInactive();      // 显示但不抢焦点
+
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => {
+    if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.hide();
+  }, 2500);
+}
+
 function sendState(state) {
   if (win && !win.isDestroyed()) {
     win.webContents.send('pet-state', state);
@@ -49,13 +115,13 @@ function sendState(state) {
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 
-// 可被拖动打断的等待
+// 可被拖动/暂停打断的等待
 function sleep(ms) {
   return new Promise((resolve) => {
     let elapsed = 0;
     const step = 100;
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || dragging) {
+      if (!win || win.isDestroyed() || dragging || paused) {
         clearInterval(timer);
         return resolve();
       }
@@ -68,10 +134,10 @@ function sleep(ms) {
   });
 }
 
-function waitUntilDragEnd() {
+function waitUntil(predicate) {
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || !dragging) {
+      if (!win || win.isDestroyed() || predicate()) {
         clearInterval(timer);
         resolve();
       }
@@ -79,11 +145,11 @@ function waitUntilDragEnd() {
   });
 }
 
-// 把窗口平滑移动到 targetX；被拖动时立刻中止
+// 把窗口平滑移动到 targetX；被拖动或暂停时立刻中止
 function walkTo(targetX, speed = 2, stepMs = 16) {
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || dragging) {
+      if (!win || win.isDestroyed() || dragging || paused) {
         clearInterval(timer);
         return resolve();
       }
@@ -106,11 +172,12 @@ async function behaviorLoop() {
   const maxX = work.x + work.width - 160;
 
   while (win && !win.isDestroyed()) {
-    if (dragging) { await waitUntilDragEnd(); continue; }
+    if (dragging) { await waitUntil(() => !dragging); continue; }
+    if (paused)   { await waitUntil(() => !paused);   continue; }
 
     sendState({ clip: 'idle' });
     await sleep(randomBetween(3000, 7000));
-    if (dragging) continue;
+    if (dragging || paused) continue;
 
     const dir = Math.random() < 0.5 ? -1 : 1;
     const distance = randomBetween(120, 320);
@@ -118,11 +185,11 @@ async function behaviorLoop() {
 
     sendState({ clip: 'walk', facing: target >= startPos.x ? 1 : -1 });
     await walkTo(target);
-    if (dragging) continue;
+    if (dragging || paused) continue;
 
     sendState({ clip: 'idle' });
     await sleep(randomBetween(800, 1600));
-    if (dragging) continue;
+    if (dragging || paused) continue;
 
     sendState({ clip: 'walk', facing: startPos.x >= target ? 1 : -1 });
     await walkTo(startPos.x);
@@ -134,6 +201,9 @@ ipcMain.on('set-over-body', (_event, overBody) => {
   if (!win || win.isDestroyed() || dragging) return;  // 拖动中不切换
   win.setIgnoreMouseEvents(!overBody, { forward: true });
 });
+
+// ---- 右键菜单 ----
+ipcMain.on('open-menu', popupMenu);
 
 // ---- 拖动 ----
 ipcMain.on('start-drag', () => {

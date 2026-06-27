@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 开始/结束拖动
   startDrag: () => ipcRenderer.send('start-drag'),
   endDrag: () => ipcRenderer.send('end-drag'),
+  // 右键点在身体上：弹出原生菜单
+  openMenu: () => ipcRenderer.send('open-menu'),
 });
