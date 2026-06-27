@@ -1,8 +1,11 @@
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, ipcMain } = require('electron');
 const path = require('path');
 
 let win;
 let startPos = { x: 0, y: 0 };   // 桌宠的"家"，走完要回到这里
+let dragging = false;            // 是否正在被拖动（拖动时暂停自动走路）
+let dragOffset = { x: 0, y: 0 }; // 鼠标点和窗口左上角的固定偏移
+let dragTimer = null;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -16,8 +19,15 @@ function createWindow() {
     skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      // 关闭同源限制，让画面能读取本地图片的像素（用于判断鼠标是否点在身体上）。
+      // 只加载项目内的本地素材，没有远程内容，安全。
+      webSecurity: false,
     },
   });
+
+  // 默认让鼠标穿透窗口（点击直接落到桌面），但仍转发鼠标移动事件给画面，
+  // 这样画面才能知道鼠标移到了身体上，再临时关闭穿透。
+  win.setIgnoreMouseEvents(true, { forward: true });
 
   // 把家安在屏幕底部偏中间
   const work = screen.getPrimaryDisplay().workArea;
@@ -28,32 +38,58 @@ function createWindow() {
   win.setPosition(startPos.x, startPos.y);
 
   win.loadFile('index.html');
-
-  // 画面加载完成后再开始"大脑"循环，确保指令能被收到
   win.webContents.on('did-finish-load', behaviorLoop);
 }
 
-// 给画面发指令：现在播哪个动作、朝哪个方向（facing: 1=朝右, -1=朝左）
 function sendState(state) {
   if (win && !win.isDestroyed()) {
     win.webContents.send('pet-state', state);
   }
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 
-// 把窗口平滑地移动到 targetX（一步一步挪，看起来像在走）
+// 可被拖动打断的等待
+function sleep(ms) {
+  return new Promise((resolve) => {
+    let elapsed = 0;
+    const step = 100;
+    const timer = setInterval(() => {
+      if (!win || win.isDestroyed() || dragging) {
+        clearInterval(timer);
+        return resolve();
+      }
+      elapsed += step;
+      if (elapsed >= ms) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, step);
+  });
+}
+
+function waitUntilDragEnd() {
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (!win || win.isDestroyed() || !dragging) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 100);
+  });
+}
+
+// 把窗口平滑移动到 targetX；被拖动时立刻中止
 function walkTo(targetX, speed = 2, stepMs = 16) {
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed()) {
+      if (!win || win.isDestroyed() || dragging) {
         clearInterval(timer);
         return resolve();
       }
       const [x, y] = win.getPosition();
       if (Math.abs(targetX - x) <= speed) {
-        win.setPosition(targetX, y);   // 到了，吸附到目标点
+        win.setPosition(targetX, y);
         clearInterval(timer);
         return resolve();
       }
@@ -63,43 +99,71 @@ function walkTo(targetX, speed = 2, stepMs = 16) {
   });
 }
 
-// 桌宠的行为循环：待机 -> 随机往一边走 -> 走回家 -> 继续待机
+// 行为循环：待机 -> 随机往一边走 -> 走回家 -> 继续待机；任何时候被拖动都会重置循环
 async function behaviorLoop() {
   const work = screen.getPrimaryDisplay().workArea;
-  const minX = work.x;                       // 别走出屏幕左边
-  const maxX = work.x + work.width - 160;     // 别走出屏幕右边
+  const minX = work.x;
+  const maxX = work.x + work.width - 160;
 
   while (win && !win.isDestroyed()) {
-    // 1) 原地待机一会儿
+    if (dragging) { await waitUntilDragEnd(); continue; }
+
     sendState({ clip: 'idle' });
     await sleep(randomBetween(3000, 7000));
-    if (!win || win.isDestroyed()) break;
+    if (dragging) continue;
 
-    // 2) 随机选方向和距离，算出目标点（并夹在屏幕范围内）
-    const dir = Math.random() < 0.5 ? -1 : 1;      // -1 往左, 1 往右
+    const dir = Math.random() < 0.5 ? -1 : 1;
     const distance = randomBetween(120, 320);
-    let target = startPos.x + dir * distance;
-    target = Math.round(Math.max(minX, Math.min(maxX, target)));
+    let target = Math.round(Math.max(minX, Math.min(maxX, startPos.x + dir * distance)));
 
-    // 3) 朝目标方向走过去
     sendState({ clip: 'walk', facing: target >= startPos.x ? 1 : -1 });
     await walkTo(target);
-    if (!win || win.isDestroyed()) break;
+    if (dragging) continue;
 
-    // 4) 到了之后停一下喘口气
     sendState({ clip: 'idle' });
     await sleep(randomBetween(800, 1600));
-    if (!win || win.isDestroyed()) break;
+    if (dragging) continue;
 
-    // 5) 走回家（脸朝回家的方向）
     sendState({ clip: 'walk', facing: startPos.x >= target ? 1 : -1 });
     await walkTo(startPos.x);
   }
 }
 
+// ---- 鼠标穿透：鼠标在身体上就接管，在透明区就穿透到桌面 ----
+ipcMain.on('set-over-body', (_event, overBody) => {
+  if (!win || win.isDestroyed() || dragging) return;  // 拖动中不切换
+  win.setIgnoreMouseEvents(!overBody, { forward: true });
+});
+
+// ---- 拖动 ----
+ipcMain.on('start-drag', () => {
+  if (!win || win.isDestroyed()) return;
+  dragging = true;
+  sendState({ clip: 'idle' });
+
+  const cursor = screen.getCursorScreenPoint();
+  const [wx, wy] = win.getPosition();
+  dragOffset = { x: cursor.x - wx, y: cursor.y - wy };
+
+  if (dragTimer) clearInterval(dragTimer);
+  dragTimer = setInterval(() => {
+    if (!win || win.isDestroyed()) { clearInterval(dragTimer); return; }
+    const c = screen.getCursorScreenPoint();
+    win.setPosition(c.x - dragOffset.x, c.y - dragOffset.y);
+  }, 16);
+});
+
+ipcMain.on('end-drag', () => {
+  if (dragTimer) { clearInterval(dragTimer); dragTimer = null; }
+  if (win && !win.isDestroyed()) {
+    const [wx, wy] = win.getPosition();
+    startPos = { x: wx, y: wy };   // 松手处变成新家
+  }
+  dragging = false;
+});
+
 app.whenReady().then(() => {
   createWindow();
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
