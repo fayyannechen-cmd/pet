@@ -6,7 +6,7 @@ const fs = require('fs');
 const DEFAULT_CONFIG = {
   baseURL: 'https://openrouter.ai/api/v1',
   apiKey: '',
-  model: 'anthropic/claude-3.5-sonnet',
+  model: 'deepseek/deepseek-v4-pro',
 };
 function configPath() {
   return path.join(app.getPath('userData'), 'config.json');
@@ -124,7 +124,7 @@ function openSettings() {
   }
   settingsWin = new BrowserWindow({
     width: 420,
-    height: 380,
+    height: 460,
     frame: false,
     transparent: true,
     resizable: false,
@@ -370,6 +370,21 @@ ipcMain.on('chat-close', () => {
 ipcMain.handle('get-config', () => loadConfig());
 ipcMain.on('save-config', (_event, cfg) => { saveConfig(cfg); });
 ipcMain.on('open-settings', openSettings);
+
+// 「测试连接」：用表单里当前的值，向接口要一下模型列表，验证 Key 是否有效
+ipcMain.handle('test-connection', async (_event, cfg) => {
+  if (!cfg.apiKey) return { ok: false, message: '请先填写 API Key' };
+  if (!cfg.baseURL) return { ok: false, message: '请先填写接口地址' };
+  try {
+    const url = cfg.baseURL.replace(/\/+$/, '') + '/models';
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${cfg.apiKey}` } });
+    if (res.ok) return { ok: true, message: '连接成功 ✓' };
+    if (res.status === 401 || res.status === 403) return { ok: false, message: `API Key 无效（${res.status}）` };
+    return { ok: false, message: `接口返回 ${res.status}` };
+  } catch (err) {
+    return { ok: false, message: `无法连接：${err.message || err}` };
+  }
+});
 ipcMain.on('settings-close', () => {
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.hide();
 });

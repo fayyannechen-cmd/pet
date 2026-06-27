@@ -35,25 +35,44 @@
     .body { flex: 1; padding: 16px; overflow-y: auto; }
     .field { margin-bottom: 14px; }
     label { display: block; font-size: 12px; color: #666; margin-bottom: 5px; }
-    input {
+
+    input, select {
       width: 100%; border: 1px solid #dcdcdc; border-radius: 8px;
-      padding: 8px 10px; font: inherit; outline: none;
+      padding: 8px 10px; font: inherit; outline: none; background: #fff;
       -webkit-user-select: text; user-select: text;
     }
-    input:focus { border-color: #0b93f6; }
+    input:focus, select:focus { border-color: #0b93f6; }
     .hint { font-size: 11px; color: #999; margin-top: 4px; }
 
+    /* 带眼睛按钮的 Key 输入 */
+    .key-row { display: flex; gap: 6px; }
+    .key-row input { flex: 1; }
+    .eye {
+      width: 38px; border: 1px solid #dcdcdc; border-radius: 8px;
+      background: #f7f7f7; cursor: pointer; font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .eye:hover { background: #efefef; }
+
+    #customModel { margin-top: 8px; }
+
     .footer {
-      display: flex; justify-content: flex-end; gap: 8px;
+      display: flex; align-items: center; gap: 10px;
       padding: 12px 16px; border-top: 1px solid #ececec;
     }
+    .status { font-size: 12px; }
+    .status.ok { color: #34c759; }
+    .status.err { color: #e0392b; }
+    .ftr-spacer { flex: 1; }
     button.action {
       border: none; border-radius: 8px; padding: 8px 16px;
       font: inherit; cursor: pointer;
     }
+    button.action:disabled { opacity: 0.6; cursor: default; }
+    .test { background: #eef1f4; color: #333; }
+    .test:hover:not(:disabled) { background: #e6eaef; }
     .save { background: #0b93f6; color: #fff; }
     .save:hover { background: #0a84e0; }
-    .saved { color: #34c759; font-size: 13px; align-self: center; margin-right: auto; }
   </style>
 </head>
 <body>
@@ -66,48 +85,106 @@
 
     <div class="body">
       <div class="field">
-        <label>接口地址 (Base URL)</label>
-        <input id="baseURL" type="text" placeholder="https://openrouter.ai/api/v1" />
-      </div>
-      <div class="field">
         <label>API Key</label>
-        <input id="apiKey" type="password" placeholder="sk-or-..." autocomplete="off" />
+        <div class="key-row">
+          <input id="apiKey" type="password" placeholder="sk-or-..." autocomplete="off" />
+          <button class="eye" id="toggleKey" type="button" title="显示/隐藏">👁</button>
+        </div>
         <div class="hint">只保存在本机，不会上传，也不会进入 Git。</div>
       </div>
+
       <div class="field">
-        <label>模型名称</label>
-        <input id="model" type="text" placeholder="anthropic/claude-3.5-sonnet" />
-        <div class="hint">填 OpenRouter 上的模型 ID。</div>
+        <label>模型</label>
+        <select id="model">
+          <option value="deepseek/deepseek-v4-pro">DeepSeek V4 Pro（国产 · 推荐）</option>
+          <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash（国产 · 便宜快）</option>
+          <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
+          <option value="anthropic/claude-haiku-4.5">Claude Haiku 4.5（便宜快）</option>
+          <option value="openai/gpt-5">GPT-5</option>
+          <option value="openai/gpt-4o-mini">GPT-4o mini（便宜快）</option>
+          <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+          <option value="__custom__">自定义…</option>
+        </select>
+        <input id="customModel" type="text" placeholder="填 OpenRouter 模型 ID" style="display:none;" />
+      </div>
+
+      <div class="field">
+        <label>接口地址 (Base URL)</label>
+        <input id="baseURL" type="text" placeholder="https://openrouter.ai/api/v1" />
       </div>
     </div>
 
     <div class="footer">
-      <span class="saved" id="saved" style="display:none;">已保存 ✓</span>
+      <button class="action test" id="test">测试连接</button>
+      <span class="status" id="status"></span>
+      <span class="ftr-spacer"></span>
       <button class="action save" id="save">保存</button>
     </div>
   </div>
 
   <script>
-    const baseURL = document.getElementById('baseURL');
     const apiKey = document.getElementById('apiKey');
-    const model = document.getElementById('model');
-    const saved = document.getElementById('saved');
+    const modelSelect = document.getElementById('model');
+    const customModel = document.getElementById('customModel');
+    const baseURL = document.getElementById('baseURL');
+    const status = document.getElementById('status');
+    const testBtn = document.getElementById('test');
 
+    // 眼睛：切换 Key 显示/隐藏
+    document.getElementById('toggleKey').addEventListener('click', () => {
+      apiKey.type = apiKey.type === 'password' ? 'text' : 'password';
+    });
+
+    // 下拉选「自定义」时，显示文本框
+    function syncCustom() {
+      customModel.style.display = modelSelect.value === '__custom__' ? 'block' : 'none';
+    }
+    modelSelect.addEventListener('change', syncCustom);
+
+    function currentModel() {
+      return modelSelect.value === '__custom__' ? customModel.value.trim() : modelSelect.value;
+    }
+
+    function setStatus(text, ok) {
+      status.textContent = text;
+      status.className = 'status ' + (ok ? 'ok' : 'err');
+    }
+
+    function formValues() {
+      return {
+        apiKey: apiKey.value.trim(),
+        model: currentModel(),
+        baseURL: baseURL.value.trim(),
+      };
+    }
+
+    // 载入已有配置
     (async () => {
       const cfg = await window.settingsAPI.get();
-      baseURL.value = cfg.baseURL || '';
       apiKey.value = cfg.apiKey || '';
-      model.value = cfg.model || '';
+      baseURL.value = cfg.baseURL || '';
+      const known = [...modelSelect.options].some((o) => o.value === cfg.model);
+      if (cfg.model && !known) {
+        modelSelect.value = '__custom__';
+        customModel.value = cfg.model;
+      } else if (cfg.model) {
+        modelSelect.value = cfg.model;
+      }
+      syncCustom();
     })();
 
+    document.getElementById('test').addEventListener('click', async () => {
+      setStatus('测试中…', true);
+      testBtn.disabled = true;
+      const result = await window.settingsAPI.test(formValues());
+      setStatus(result.message, result.ok);
+      testBtn.disabled = false;
+    });
+
     document.getElementById('save').addEventListener('click', () => {
-      window.settingsAPI.save({
-        baseURL: baseURL.value.trim(),
-        apiKey: apiKey.value.trim(),
-        model: model.value.trim(),
-      });
-      saved.style.display = 'inline';
-      setTimeout(() => { saved.style.display = 'none'; }, 1500);
+      window.settingsAPI.save(formValues());
+      setStatus('已保存 ✓', true);
+      setTimeout(() => { status.textContent = ''; }, 1500);
     });
 
     document.getElementById('close').addEventListener('click', () => window.settingsAPI.close());
