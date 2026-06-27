@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      background: transparent;
+      font: 14px/1.4 -apple-system, "PingFang SC", sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+    .app {
+      display: flex; flex-direction: column;
+      height: 100vh;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .header {
+      -webkit-app-region: drag;
+      display: flex; align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #ececec;
+    }
+    .header .title { font-weight: 600; font-size: 15px; }
+    .spacer { flex: 1; }
+    .close {
+      -webkit-app-region: no-drag;
+      width: 26px; height: 26px; border: none; border-radius: 50%;
+      background: #f0f0f0; color: #666; font-size: 15px; cursor: pointer;
+    }
+    .close:hover { background: #e4e4e4; }
+
+    .body { flex: 1; padding: 16px; overflow-y: auto; }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 12px; color: #666; margin-bottom: 5px; }
+    input {
+      width: 100%; border: 1px solid #dcdcdc; border-radius: 8px;
+      padding: 8px 10px; font: inherit; outline: none;
+      -webkit-user-select: text; user-select: text;
+    }
+    input:focus { border-color: #0b93f6; }
+    .hint { font-size: 11px; color: #999; margin-top: 4px; }
+
+    .footer {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 12px 16px; border-top: 1px solid #ececec;
+    }
+    button.action {
+      border: none; border-radius: 8px; padding: 8px 16px;
+      font: inherit; cursor: pointer;
+    }
+    .save { background: #0b93f6; color: #fff; }
+    .save:hover { background: #0a84e0; }
+    .saved { color: #34c759; font-size: 13px; align-self: center; margin-right: auto; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <div class="title">设置</div>
+      <div class="spacer"></div>
+      <button class="close" id="close">✕</button>
+    </div>
+
+    <div class="body">
+      <div class="field">
+        <label>接口地址 (Base URL)</label>
+        <input id="baseURL" type="text" placeholder="https://openrouter.ai/api/v1" />
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input id="apiKey" type="password" placeholder="sk-or-..." autocomplete="off" />
+        <div class="hint">只保存在本机，不会上传，也不会进入 Git。</div>
+      </div>
+      <div class="field">
+        <label>模型名称</label>
+        <input id="model" type="text" placeholder="anthropic/claude-3.5-sonnet" />
+        <div class="hint">填 OpenRouter 上的模型 ID。</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span class="saved" id="saved" style="display:none;">已保存 ✓</span>
+      <button class="action save" id="save">保存</button>
+    </div>
+  </div>
+
+  <script>
+    const baseURL = document.getElementById('baseURL');
+    const apiKey = document.getElementById('apiKey');
+    const model = document.getElementById('model');
+    const saved = document.getElementById('saved');
+
+    (async () => {
+      const cfg = await window.settingsAPI.get();
+      baseURL.value = cfg.baseURL || '';
+      apiKey.value = cfg.apiKey || '';
+      model.value = cfg.model || '';
+    })();
+
+    document.getElementById('save').addEventListener('click', () => {
+      window.settingsAPI.save({
+        baseURL: baseURL.value.trim(),
+        apiKey: apiKey.value.trim(),
+        model: model.value.trim(),
+      });
+      saved.style.display = 'inline';
+      setTimeout(() => { saved.style.display = 'none'; }, 1500);
+    });
+
+    document.getElementById('close').addEventListener('click', () => window.settingsAPI.close());
+  </script>
+</body>
+</html>

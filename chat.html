@@ -137,6 +137,14 @@
       display: flex; align-items: center; justify-content: center;
     }
     #send:disabled { background: #cfe3fb; cursor: default; }
+
+    .bubble.err { background: #ffeaea; color: #c0392b; }
+    .link-btn {
+      display: inline-block; margin-top: 6px;
+      background: #0b93f6; color: #fff;
+      border: none; border-radius: 12px;
+      padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -197,13 +205,21 @@
       if (typingRow) { typingRow.remove(); typingRow = null; }
     }
 
+    // 对话历史（发给 AI 用），不含开场白
+    const history = [];
+    let busy = false;
+
     function sendMessage() {
+      if (busy) return;
       const text = input.value.trim();
       if (!text) return;
       addBubble(text, 'me');
+      history.push({ role: 'user', content: text });
       input.value = '';
+      busy = true;
+      sendBtn.disabled = true;
       showTyping();
-      window.chatAPI.send(text);
+      window.chatAPI.send(history);
     }
 
     sendBtn.addEventListener('click', sendMessage);
@@ -211,14 +227,90 @@
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sendMessage(); }
     });
 
-    window.chatAPI.onReply((text) => {
+    // ---- 流式接收 + 打字机效果 ----
+    let pending = '';          // 还没显示出来的字
+    let assistantText = '';    // 已显示的完整回复
+    let petBubbleEl = null;    // 当前正在生长的气泡
+    let streamEnded = false;
+    let typer = null;
+
+    function finishTurn() {
+      busy = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+
+    function startTyper() {
+      if (typer) return;
+      typer = setInterval(() => {
+        if (pending.length > 0) {
+          assistantText += pending[0];
+          pending = pending.slice(1);
+          petBubbleEl.textContent = assistantText;
+          scrollToBottom();
+        } else if (streamEnded) {
+          clearInterval(typer); typer = null;
+          if (assistantText) history.push({ role: 'assistant', content: assistantText });
+          petBubbleEl = null;
+          finishTurn();
+        }
+      }, 18);   // 每 18ms 蹦一个字
+    }
+
+    function beginPetBubble() {
       hideTyping();
-      addBubble(text, 'pet');
+      const row = document.createElement('div');
+      row.className = 'row pet';
+      petBubbleEl = document.createElement('div');
+      petBubbleEl.className = 'bubble';
+      row.appendChild(petBubbleEl);
+      messages.appendChild(row);
+      assistantText = '';
+      pending = '';
+      streamEnded = false;
+      startTyper();
+    }
+
+    function showError(message, needConfig) {
+      hideTyping();
+      const row = document.createElement('div');
+      row.className = 'row pet';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble err';
+      bubble.textContent = message;
+      if (needConfig) {
+        const btn = document.createElement('button');
+        btn.className = 'link-btn';
+        btn.textContent = '打开设置';
+        btn.addEventListener('click', () => window.chatAPI.openSettings());
+        bubble.appendChild(document.createElement('br'));
+        bubble.appendChild(btn);
+      }
+      row.appendChild(bubble);
+      messages.appendChild(row);
+      scrollToBottom();
+    }
+
+    window.chatAPI.onStream((ev) => {
+      if (ev.type === 'chunk') {
+        if (!petBubbleEl) beginPetBubble();
+        pending += ev.text;
+      } else if (ev.type === 'done') {
+        if (petBubbleEl) {
+          streamEnded = true;          // 让打字机把剩余的字吐完再收尾
+        } else {
+          hideTyping();                // 空回复
+          finishTurn();
+        }
+      } else if (ev.type === 'error') {
+        showError(ev.message, ev.needConfig);
+        finishTurn();
+      }
     });
 
     document.getElementById('close').addEventListener('click', () => window.chatAPI.close());
 
-    // 开场白
+    // 开场白（仅展示，不计入发给 AI 的历史）
     addBubble('汪！想聊点什么？', 'pet');
     input.focus();
   </script>

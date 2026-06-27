@@ -1,5 +1,28 @@
 const { app, BrowserWindow, screen, ipcMain, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+// ---- 本地配置（存在用户数据目录，在 Git 仓库之外，绝不会被提交）----
+const DEFAULT_CONFIG = {
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: '',
+  model: 'anthropic/claude-3.5-sonnet',
+};
+function configPath() {
+  return path.join(app.getPath('userData'), 'config.json');
+}
+function loadConfig() {
+  try {
+    return { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(configPath(), 'utf8')) };
+  } catch {
+    return { ...DEFAULT_CONFIG };
+  }
+}
+function saveConfig(partial) {
+  const merged = { ...loadConfig(), ...partial };
+  fs.writeFileSync(configPath(), JSON.stringify(merged, null, 2));
+  return merged;
+}
 
 let win;
 let startPos = { x: 0, y: 0 };   // 桌宠的"家"，走完要回到这里
@@ -12,6 +35,7 @@ let bubbleWin = null;            // "打招呼"用的气泡窗口
 let bubbleTimer = null;
 let bubbleFollowTimer = null;    // 让气泡持续跟随桌宠
 let chatWin = null;              // 聊天窗口
+let settingsWin = null;          // 设置窗口
 
 function createWindow() {
   win = new BrowserWindow({
@@ -57,8 +81,9 @@ function setPaused(p) {
 function popupMenu() {
   if (!win || win.isDestroyed()) return;
   const menu = Menu.buildFromTemplate([
-    { label: '打招呼', click: () => showGreeting('你好呀') },
+    { label: '打招呼', click: () => showGreeting('你好鸭～❤️') },
     { label: '聊天…', click: openChat },
+    { label: '设置…', click: openSettings },
     { label: paused ? '继续' : '暂停', click: () => setPaused(!paused) },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
@@ -88,6 +113,27 @@ function openChat() {
     },
   });
   chatWin.loadFile('chat.html');
+}
+
+// ---- 设置窗口 ----
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 420,
+    height: 380,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'settings-preload.js'),
+    },
+  });
+  settingsWin.loadFile('settings.html');
 }
 
 // ---- "打招呼"气泡窗口 ----
@@ -241,15 +287,91 @@ ipcMain.on('set-over-body', (_event, overBody) => {
 // ---- 右键菜单 ----
 ipcMain.on('open-menu', popupMenu);
 
-// ---- 聊天：收到消息后回复（暂时固定回复，以后这里换成真正的 AI）----
-ipcMain.on('chat-message', (event, _text) => {
-  setTimeout(() => {
-    if (!event.sender.isDestroyed()) event.sender.send('chat-reply', '我收到啦');
-  }, 600);
+// ---- 聊天：把消息发给 OpenRouter，流式接收 AI 回复 ----
+const SYSTEM_PROMPT = {
+  role: 'system',
+  content: '你是一只名叫"小狗"的桌面宠物，性格活泼亲切。回复简短口语化，可以偶尔用"汪"，用中文回答。',
+};
+
+function streamSend(sender, payload) {
+  if (sender && !sender.isDestroyed()) sender.send('chat-stream', payload);
+}
+
+async function streamChat(sender, messages) {
+  const cfg = loadConfig();
+  if (!cfg.apiKey) {
+    streamSend(sender, { type: 'error', needConfig: true, message: '还没有配置 API Key，请先在「设置」里填写。' });
+    return;
+  }
+
+  try {
+    const url = cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cfg.apiKey}`,
+        'HTTP-Referer': 'https://desk-pet.local',   // OpenRouter 可选，用于统计
+        'X-Title': 'Desk Pet',
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [SYSTEM_PROMPT, ...messages],
+        stream: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      streamSend(sender, { type: 'error', message: `接口出错 ${res.status}：${detail.slice(0, 200)}` });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop();   // 最后一段可能不完整，留到下一轮
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;   // 跳过注释/心跳行
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) streamSend(sender, { type: 'chunk', text: delta });
+        } catch {
+          /* 不完整的 JSON 片段，忽略 */
+        }
+      }
+    }
+    streamSend(sender, { type: 'done' });
+  } catch (err) {
+    streamSend(sender, { type: 'error', message: `请求失败：${err.message || err}` });
+  }
+}
+
+ipcMain.on('chat-message', (event, messages) => {
+  streamChat(event.sender, messages);
 });
 
 ipcMain.on('chat-close', () => {
   if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
+});
+
+// ---- 设置 ----
+ipcMain.handle('get-config', () => loadConfig());
+ipcMain.on('save-config', (_event, cfg) => { saveConfig(cfg); });
+ipcMain.on('open-settings', openSettings);
+ipcMain.on('settings-close', () => {
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.hide();
 });
 
 // ---- 拖动 ----
