@@ -10,6 +10,7 @@ let dragTimer = null;
 
 let bubbleWin = null;            // "打招呼"用的气泡窗口
 let bubbleTimer = null;
+let chatWin = null;              // 聊天窗口
 
 function createWindow() {
   win = new BrowserWindow({
@@ -56,11 +57,36 @@ function popupMenu() {
   if (!win || win.isDestroyed()) return;
   const menu = Menu.buildFromTemplate([
     { label: '打招呼', click: () => showGreeting('你好呀') },
+    { label: '聊天…', click: openChat },
     { label: paused ? '继续' : '暂停', click: () => setPaused(!paused) },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]);
   menu.popup({ window: win });
+}
+
+// ---- 聊天窗口 ----
+function openChat() {
+  if (chatWin && !chatWin.isDestroyed()) {
+    chatWin.show();
+    chatWin.focus();
+    return;
+  }
+  chatWin = new BrowserWindow({
+    width: 360,
+    height: 520,
+    minWidth: 300,
+    minHeight: 380,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    hasShadow: true,
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'chat-preload.js'),
+    },
+  });
+  chatWin.loadFile('chat.html');
 }
 
 // ---- "打招呼"气泡窗口 ----
@@ -204,6 +230,17 @@ ipcMain.on('set-over-body', (_event, overBody) => {
 
 // ---- 右键菜单 ----
 ipcMain.on('open-menu', popupMenu);
+
+// ---- 聊天：收到消息后回复（暂时固定回复，以后这里换成真正的 AI）----
+ipcMain.on('chat-message', (event, _text) => {
+  setTimeout(() => {
+    if (!event.sender.isDestroyed()) event.sender.send('chat-reply', '我收到啦');
+  }, 600);
+});
+
+ipcMain.on('chat-close', () => {
+  if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
+});
 
 // ---- 拖动 ----
 ipcMain.on('start-drag', () => {
