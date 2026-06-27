@@ -10,6 +10,7 @@ let dragTimer = null;
 
 let bubbleWin = null;            // "打招呼"用的气泡窗口
 let bubbleTimer = null;
+let bubbleFollowTimer = null;    // 让气泡持续跟随桌宠
 let chatWin = null;              // 聊天窗口
 
 function createWindow() {
@@ -110,14 +111,18 @@ function ensureBubble() {
   bubbleWin.loadFile('bubble.html');
 }
 
-function showGreeting(text) {
-  if (!win || win.isDestroyed()) return;
-  ensureBubble();
-
-  // 摆在桌宠正上方
+// 把气泡摆到桌宠正上方
+function positionBubble() {
+  if (!win || win.isDestroyed() || !bubbleWin || bubbleWin.isDestroyed()) return;
   const [px, py] = win.getPosition();
   const bw = 220;
   bubbleWin.setPosition(Math.round(px + 80 - bw / 2), Math.round(py - 30));
+}
+
+function showGreeting(text) {
+  if (!win || win.isDestroyed()) return;
+  ensureBubble();
+  positionBubble();
 
   const send = () => bubbleWin.webContents.send('bubble-text', text);
   if (bubbleWin.webContents.isLoading()) {
@@ -127,8 +132,13 @@ function showGreeting(text) {
   }
   bubbleWin.showInactive();      // 显示但不抢焦点
 
+  // 显示期间持续跟随桌宠移动
+  if (bubbleFollowTimer) clearInterval(bubbleFollowTimer);
+  bubbleFollowTimer = setInterval(positionBubble, 16);
+
   if (bubbleTimer) clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => {
+    if (bubbleFollowTimer) { clearInterval(bubbleFollowTimer); bubbleFollowTimer = null; }
     if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.hide();
   }, 2500);
 }
