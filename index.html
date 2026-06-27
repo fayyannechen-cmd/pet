@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;   /* 整个页面透明 */
+      overflow: hidden;
+    }
+
+    #pet {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;       /* 完整显示，不裁剪 */
+      /* 保持像素锐利，不做模糊插值 */
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      -webkit-user-select: none;
+      user-select: none;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <img id="pet" src="assets/little-mao-puppy/frames/wave/01.png" alt="pet" />
+</body>
+</html>

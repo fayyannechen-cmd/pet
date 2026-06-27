@@ -1,0 +1,12 @@
+{
+  "name": "desk-pet",
+  "version": "0.1.0",
+  "description": "A Mac desktop pet — floating, transparent, always-on-top.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
