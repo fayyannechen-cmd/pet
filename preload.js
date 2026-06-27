@@ -14,4 +14,6 @@ contextBridge.exposeInMainWorld('petAPI', {
   endDrag: () => ipcRenderer.send('end-drag'),
   // 右键点在身体上：弹出原生菜单
   openMenu: () => ipcRenderer.send('open-menu'),
+  // 双击身体：播放一次表情动画
+  playExpression: () => ipcRenderer.send('play-expression'),
 });

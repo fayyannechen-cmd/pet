@@ -41,6 +41,10 @@
         frames: ['walk/01.png','walk/02.png','walk/03.png','walk/04.png','walk/05.png','walk/06.png','walk/07.png','walk/08.png'],
         fps: 10,
       },
+      expression: {   // 表情：双击触发，只播一次
+        frames: ['expressions/tearful.png','expressions/tearful-2.png','expressions/tearful-3.png','expressions/tearful-4.png'],
+        fps: 5,
+      },
     };
 
     const petImg = document.getElementById('pet');
@@ -71,6 +75,29 @@
       }, 1000 / clip.fps);
     }
 
+    // 播放指定次数的动画：播完停在最后一帧，不无限循环
+    function playTimes(name, times) {
+      const clip = CLIPS[name];
+      if (!clip) return;
+      currentClip = name;
+      frameIndex = 0;
+      let remaining = times;
+      petImg.src = `${BASE}/${clip.frames[0]}`;
+      if (timer) clearInterval(timer);
+      timer = setInterval(() => {
+        frameIndex++;
+        if (frameIndex >= clip.frames.length) {
+          remaining--;
+          if (remaining <= 0) {                  // 播够次数，停在最后一帧
+            clearInterval(timer); timer = null;
+            return;
+          }
+          frameIndex = 0;                        // 再来一轮
+        }
+        petImg.src = `${BASE}/${clip.frames[frameIndex]}`;
+      }, 1000 / clip.fps);
+    }
+
     function setFacing(facing) {
       currentFacing = facing;
       petImg.style.transform = facing === -1 ? 'scaleX(-1)' : 'scaleX(1)';
@@ -89,6 +116,7 @@
     window.petAPI.onState((state) => {
       if (state.facing !== undefined) setFacing(state.facing);
       if (state.paused !== undefined) setPaused(state.paused);
+      if (state.repeat && state.clip) { playTimes(state.clip, state.repeat); return; }   // 播指定次数
       if (state.clip && state.clip !== currentClip && !paused) startClip(state.clip);
     });
 
@@ -142,6 +170,12 @@
       e.preventDefault();
       if (!isOverBody(e.clientX, e.clientY)) return;
       window.petAPI.openMenu();
+    });
+
+    // 双击身体 -> 播放一次表情动画
+    window.addEventListener('dblclick', (e) => {
+      if (!isOverBody(e.clientX, e.clientY)) return;
+      window.petAPI.playExpression();
     });
   </script>
 </body>

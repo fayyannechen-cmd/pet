@@ -28,6 +28,8 @@ let win;
 let startPos = { x: 0, y: 0 };   // 桌宠的"家"，走完要回到这里
 let dragging = false;            // 是否正在被拖动（拖动时暂停自动走路）
 let paused = false;              // 是否被手动暂停（动画 + 走路都冻结）
+let emoting = false;             // 是否正在播放双击触发的表情（期间停下走动）
+let emoteTimer = null;
 let dragOffset = { x: 0, y: 0 }; // 鼠标点和窗口左上角的固定偏移
 let dragTimer = null;
 
@@ -203,7 +205,7 @@ function sleep(ms) {
     let elapsed = 0;
     const step = 100;
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || dragging || paused) {
+      if (!win || win.isDestroyed() || dragging || paused || emoting) {
         clearInterval(timer);
         return resolve();
       }
@@ -231,7 +233,7 @@ function waitUntil(predicate) {
 function walkTo(targetX, speed = 2, stepMs = 16) {
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || dragging || paused) {
+      if (!win || win.isDestroyed() || dragging || paused || emoting) {
         clearInterval(timer);
         return resolve();
       }
@@ -256,10 +258,11 @@ async function behaviorLoop() {
   while (win && !win.isDestroyed()) {
     if (dragging) { await waitUntil(() => !dragging); continue; }
     if (paused)   { await waitUntil(() => !paused);   continue; }
+    if (emoting)  { await waitUntil(() => !emoting);  continue; }
 
     sendState({ clip: 'idle' });
     await sleep(randomBetween(3000, 7000));
-    if (dragging || paused) continue;
+    if (dragging || paused || emoting) continue;
 
     const dir = Math.random() < 0.5 ? -1 : 1;
     const distance = randomBetween(120, 320);
@@ -267,11 +270,11 @@ async function behaviorLoop() {
 
     sendState({ clip: 'walk', facing: target >= startPos.x ? 1 : -1 });
     await walkTo(target);
-    if (dragging || paused) continue;
+    if (dragging || paused || emoting) continue;
 
     sendState({ clip: 'idle' });
     await sleep(randomBetween(800, 1600));
-    if (dragging || paused) continue;
+    if (dragging || paused || emoting) continue;
 
     sendState({ clip: 'walk', facing: startPos.x >= target ? 1 : -1 });
     await walkTo(startPos.x);
@@ -286,6 +289,16 @@ ipcMain.on('set-over-body', (_event, overBody) => {
 
 // ---- 右键菜单 ----
 ipcMain.on('open-menu', popupMenu);
+
+// ---- 双击：停下来播一次表情，结束后恢复走动 ----
+ipcMain.on('play-expression', () => {
+  if (!win || win.isDestroyed() || dragging || paused) return;
+  emoting = true;
+  sendState({ clip: 'expression', repeat: 3, facing: 1 });   // 表情播 3 次
+  if (emoteTimer) clearTimeout(emoteTimer);
+  // 单次约 0.8s（4 帧 @ 5fps），播 3 次 ≈ 2.4s，留点余量再恢复
+  emoteTimer = setTimeout(() => { emoting = false; emoteTimer = null; }, 2700);
+});
 
 // ---- 聊天：把消息发给 OpenRouter，流式接收 AI 回复 ----
 const SYSTEM_PROMPT = {
