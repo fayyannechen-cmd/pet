@@ -188,7 +188,6 @@ function setPaused(p) {
 function popupMenu() {
   if (!win || win.isDestroyed()) return;
   const menu = Menu.buildFromTemplate([
-    { label: '打招呼', click: () => showGreeting('你好鸭～❤️') },
     { label: '聊天…', click: openChat },
     { label: '📝 备忘录', click: openMemo },
     { label: '设置…', click: openSettings },
