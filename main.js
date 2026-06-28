@@ -2,6 +2,10 @@ const { app, BrowserWindow, screen, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// 桌宠窗口尺寸（改这里即可整体等比缩放）
+const PET = 120;
+const HALF = PET / 2;
+
 // ---- 本地配置（存在用户数据目录，在 Git 仓库之外，绝不会被提交）----
 const DEFAULT_CONFIG = {
   baseURL: 'https://openrouter.ai/api/v1',
@@ -53,8 +57,8 @@ function updateTalking() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 160,
-    height: 160,
+    width: PET,
+    height: PET,
     transparent: true,   // 背景透明
     frame: false,        // 没有标题栏和边框
     alwaysOnTop: true,   // 浮在桌面最上面
@@ -76,8 +80,8 @@ function createWindow() {
   // 把家安在屏幕底部偏中间
   const work = screen.getPrimaryDisplay().workArea;
   startPos = {
-    x: Math.round(work.x + work.width / 2 - 80),
-    y: Math.round(work.y + work.height - 160 - 60),
+    x: Math.round(work.x + work.width / 2 - HALF),
+    y: Math.round(work.y + work.height - PET - 60),
   };
   win.setPosition(startPos.x, startPos.y);
 
@@ -153,8 +157,8 @@ function openSettings() {
 }
 
 // ---- 桌宠头顶气泡窗口（打招呼 + 贴身聊天回复共用）----
-const BUBBLE_W = 260;
-const BUBBLE_H = 170;
+const BUBBLE_W = 200;
+const BUBBLE_H = 140;
 
 function ensureBubble() {
   if (bubbleWin && !bubbleWin.isDestroyed()) return;
@@ -188,7 +192,7 @@ function bubbleSend(channel, payload) {
 function positionBubble() {
   if (!win || win.isDestroyed() || !bubbleWin || bubbleWin.isDestroyed()) return;
   const [px, py] = win.getPosition();
-  bubbleWin.setPosition(Math.round(px + 80 - BUBBLE_W / 2), Math.round(py + 20 - BUBBLE_H));
+  bubbleWin.setPosition(Math.round(px + HALF - BUBBLE_W / 2), Math.round(py + 12 - BUBBLE_H));
 }
 
 function startBubbleFollow() {
@@ -219,13 +223,13 @@ function sendState(state) {
 }
 
 // ---- 宠物下方的快捷输入条 ----
-const TALK_W = 240;
-const TALK_H = 56;
+const TALK_W = 190;
+const TALK_H = 48;
 
 function positionTalk() {
   if (!win || win.isDestroyed() || !talkWin || talkWin.isDestroyed()) return;
   const [px, py] = win.getPosition();
-  talkWin.setPosition(Math.round(px + 80 - TALK_W / 2), Math.round(py + 150));
+  talkWin.setPosition(Math.round(px + HALF - TALK_W / 2), Math.round(py + PET - 8));
 }
 
 function createTalkBar() {
@@ -387,7 +391,7 @@ function walkTo(targetX, speed = 2, stepMs = 16) {
 async function behaviorLoop() {
   const work = screen.getPrimaryDisplay().workArea;
   const minX = work.x;
-  const maxX = work.x + work.width - 160;
+  const maxX = work.x + work.width - PET;
 
   while (win && !win.isDestroyed()) {
     if (dragging) { await waitUntil(() => !dragging); continue; }
