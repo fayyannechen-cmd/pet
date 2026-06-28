@@ -329,11 +329,12 @@ async function streamChatToBubble(messages) {
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 
-// 待机动作：随机挠痒 / 欢呼 / 打滚，让站着时更有生气
+// 待机动作：随机挠痒 / 欢呼 / 打滚 / 挥手，让站着时更有生气
 const idleClip = () => {
   const r = Math.random();
-  if (r < 0.25) return 'cheer';
-  if (r < 0.45) return 'roll';
+  if (r < 0.20) return 'cheer';
+  if (r < 0.40) return 'roll';
+  if (r < 0.55) return 'wave';
   return 'idle';
 };
 
