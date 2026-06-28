@@ -68,6 +68,19 @@ function extractMemo(text) {
   return text.slice(i + MEMO_TRIGGER.length).replace(/^[\s:：,，、.。!！~～-]+/, '').trim();
 }
 
+// ---- 聊天关键词触发宠物动作 ----
+const ACTION_KEYWORDS = [
+  { clip: 'wave',       repeat: 2, ms: 1600, words: ['挥手', '打招呼', '你好', 'hi', 'hello', 'wave'] },
+  { clip: 'cheer',      repeat: 2, ms: 1500, words: ['欢呼', '庆祝', '加油', '耶', 'cheer', '棒'] },
+  { clip: 'roll',       repeat: 2, ms: 2400, words: ['打滚', '滚一个', '转圈', 'roll'] },
+  { clip: 'idle',       repeat: 2, ms: 1600, words: ['挠痒', '挠挠', 'scratch'] },
+  { clip: 'expression', repeat: 2, ms: 2000, words: ['难过', '伤心', '委屈', '哭', 'cry'] },
+];
+function matchAction(text) {
+  return ACTION_KEYWORDS.find((a) => a.words.some((w) => text.includes(w))) || null;
+}
+const ACTION_HELP = '我会这些动作哦～🐾\n挥手 / 欢呼 / 打滚 / 挠痒 / 难过\n直接打字就能让我做';
+
 // ---- 当前运行的任务（前台程序）----
 function run(cmd, args) {
   return new Promise((resolve) => {
@@ -405,6 +418,15 @@ function sayInBubble(text, linger) {
   bubbleSend('bubble-done');
 }
 
+// 让宠物做一个动作（播放 repeat 次后自动恢复）
+function playAction(a) {
+  if (!win || win.isDestroyed() || dragging) return;
+  emoting = true;
+  sendState({ clip: a.clip, repeat: a.repeat, facing: 1 });
+  if (emoteTimer) clearTimeout(emoteTimer);
+  emoteTimer = setTimeout(() => { emoting = false; emoteTimer = null; }, a.ms);
+}
+
 // 贴身聊天：把 AI 回复以流式打字机显示在头顶气泡里
 async function streamChatToBubble(messages) {
   ensureBubble();
@@ -673,6 +695,23 @@ ipcMain.on('chat-message', (event, messages) => {
     event.sender.send('chat-stream', { type: 'done' });
     return;
   }
+
+  // 列出会的动作
+  if (/你会什么|会做什么|会什么|动作列表|有什么动作|会哪些/.test(last)) {
+    event.sender.send('chat-stream', { type: 'chunk', text: ACTION_HELP });
+    event.sender.send('chat-stream', { type: 'done' });
+    return;
+  }
+
+  // 关键词触发动作
+  const action = matchAction(last);
+  if (action) {
+    playAction(action);
+    event.sender.send('chat-stream', { type: 'chunk', text: '好呀～🐾' });
+    event.sender.send('chat-stream', { type: 'done' });
+    return;
+  }
+
   streamChat(event.sender, messages);
 });
 
@@ -709,6 +748,22 @@ ipcMain.on('talk-send', (_event, text) => {
     } else {
       sayInBubble('要记点什么呢？在「添加到备忘录」后面写上内容～');
     }
+    return;
+  }
+
+  // 「你会什么 / 动作」：列出会的动作
+  if (/你会什么|会做什么|会什么|动作列表|有什么动作|会哪些/.test(t)) {
+    replying = true;
+    updateTalking();
+    sendState({ clip: 'idle' });
+    sayInBubble(ACTION_HELP, 9000);
+    return;
+  }
+
+  // 关键词触发动作（不走 AI）
+  const action = matchAction(t);
+  if (action) {
+    playAction(action);
     return;
   }
 
