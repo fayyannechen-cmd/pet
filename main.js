@@ -309,20 +309,31 @@ function sendState(state) {
   }
 }
 
-// ---- 宠物下方的快捷输入条 ----
-const TALK_W = 190;
-const TALK_H = 48;
+// ---- 宠物下方的快捷输入条（可收起成一个蓝色上键）----
+const TALK_EXPANDED = { w: 190, h: 44 };
+const TALK_COLLAPSED = { w: 32, h: 32 };   // 收起态≈粉色备忘录大小
+let talkExpanded = false;
+
+function talkSize() {
+  return talkExpanded ? TALK_EXPANDED : TALK_COLLAPSED;
+}
 
 function positionTalk() {
   if (!win || win.isDestroyed() || !talkWin || talkWin.isDestroyed()) return;
   const [px, py] = win.getPosition();
-  talkWin.setPosition(Math.round(px + HALF - TALK_W / 2), Math.round(py + PET - 8));
+  if (talkExpanded) {
+    // 展开：底部居中的输入条
+    talkWin.setPosition(Math.round(px + HALF - TALK_EXPANDED.w / 2), Math.round(py + PET - 8));
+  } else {
+    // 收起：小蓝键叠在粉色备忘录（右上角）正下方
+    talkWin.setPosition(Math.round(px + PET - 2), Math.round(py + ICON_H + 12));
+  }
 }
 
 function createTalkBar() {
   talkWin = new BrowserWindow({
-    width: TALK_W,
-    height: TALK_H,
+    width: TALK_COLLAPSED.w,
+    height: TALK_COLLAPSED.h,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -728,6 +739,13 @@ ipcMain.on('talk-focus', () => {
 ipcMain.on('talk-blur', () => {
   talkFocused = false;
   updateTalking();
+});
+
+ipcMain.on('talk-resize', (_event, expanded) => {
+  talkExpanded = !!expanded;
+  const s = talkSize();
+  if (talkWin && !talkWin.isDestroyed()) talkWin.setSize(s.w, s.h);
+  positionTalk();   // 改完尺寸再按右缘锚定重新定位
 });
 
 ipcMain.on('talk-send', (_event, text) => {

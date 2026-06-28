@@ -7,13 +7,26 @@
     html, body {
       margin: 0; height: 100%;
       background: transparent; overflow: hidden;
-      font: 14px/1.4 -apple-system, "PingFang SC", sans-serif;
+      font: 13px/1.4 -apple-system, "PingFang SC", sans-serif;
       -webkit-user-select: none; user-select: none;
+      display: flex; align-items: center; justify-content: center;
     }
-    /* 苹果手机风格的胶囊输入条 */
+
+    /* 蓝色圆形按钮（上箭头）——收起态 = 它本身；展开态 = 它作发送键 */
+    .circle {
+      width: 26px; height: 26px; flex-shrink: 0;
+      border: none; border-radius: 50%;
+      background: #0b93f6; color: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    }
+    .circle:hover { background: #0a84e0; }
+    .circle:active { transform: scale(0.95); }
+
+    /* 展开态的胶囊输入条 */
     .bar {
       display: flex; align-items: center; gap: 6px;
-      height: 38px; margin: 5px 6px;
+      width: calc(100% - 12px); height: 36px;
       padding: 3px 3px 3px 13px;
       background: rgba(255, 255, 255, 0.96);
       border: 1px solid #e3e3e3;
@@ -21,6 +34,7 @@
       box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
       backdrop-filter: saturate(180%) blur(16px);
     }
+    .bar .circle { box-shadow: none; }
     #input {
       flex: 1; min-width: 0;
       border: none; outline: none; background: transparent;
@@ -28,20 +42,24 @@
       -webkit-user-select: text; user-select: text;
     }
     #input::placeholder { color: #b0b0b5; }
-    #send {
-      width: 30px; height: 30px; flex-shrink: 0;
-      border: none; border-radius: 50%;
-      background: #0b93f6; color: #fff; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #send:disabled { background: #cfe3fb; cursor: default; }
+
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <div class="bar">
+  <!-- 收起态：一个蓝色上键 -->
+  <button class="circle" id="expandBtn" title="双击展开聊天">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 20V5M12 5l-6 6M12 5l6 6" stroke="#fff" stroke-width="2.4"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+
+  <!-- 展开态：输入条 -->
+  <div class="bar hidden" id="bar">
     <input id="input" type="text" placeholder="跟我说说话…" autocomplete="off" />
-    <button id="send" title="发送">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <button class="circle" id="send" title="发送">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
         <path d="M12 20V5M12 5l-6 6M12 5l6 6" stroke="#fff" stroke-width="2.4"
               stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
@@ -49,8 +67,27 @@
   </div>
 
   <script>
+    const expandBtn = document.getElementById('expandBtn');
+    const bar = document.getElementById('bar');
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('send');
+
+    function setExpanded(v) {
+      window.talkAPI.resize(v);          // 先让主进程把窗口尺寸调好
+      if (v) {
+        expandBtn.classList.add('hidden');
+        bar.classList.remove('hidden');
+        input.focus();
+      } else {
+        bar.classList.add('hidden');
+        expandBtn.classList.remove('hidden');
+        input.value = '';
+        input.blur();
+      }
+    }
+
+    // 双击蓝色上键 -> 展开
+    expandBtn.addEventListener('dblclick', () => setExpanded(true));
 
     function send() {
       const text = input.value.trim();
@@ -59,12 +96,20 @@
       input.value = '';
     }
 
-    sendBtn.addEventListener('click', () => { send(); input.focus(); });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); }
+    sendBtn.addEventListener('click', () => {
+      if (input.value.trim() === '') { setExpanded(false); return; }  // 空内容点蓝键 = 收起
+      send();
+      input.focus();
     });
 
-    // 聚焦时让宠物停下来听你说话，失焦后恢复
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setExpanded(false); return; }
+      // 输入框为空时按空格 -> 收起为上键（有内容时空格照常输入）
+      if (e.key === ' ' && input.value.trim() === '') { e.preventDefault(); setExpanded(false); return; }
+    });
+
+    // 聚焦输入时让宠物停下听，失焦恢复
     input.addEventListener('focus', () => window.talkAPI.focus());
     input.addEventListener('blur', () => window.talkAPI.blur());
   </script>
