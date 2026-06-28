@@ -325,8 +325,13 @@ async function streamChatToBubble(messages) {
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 
-// 待机动作：随机挠痒或欢呼，让站着时更有生气
-const idleClip = () => (Math.random() < 0.4 ? 'cheer' : 'idle');
+// 待机动作：随机挠痒 / 欢呼 / 打滚，让站着时更有生气
+const idleClip = () => {
+  const r = Math.random();
+  if (r < 0.25) return 'cheer';
+  if (r < 0.45) return 'roll';
+  return 'idle';
+};
 
 // 可被拖动/暂停打断的等待
 function sleep(ms) {
