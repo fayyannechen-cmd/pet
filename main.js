@@ -199,6 +199,9 @@ function sendState(state) {
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 
+// 待机动作：随机挠痒或欢呼，让站着时更有生气
+const idleClip = () => (Math.random() < 0.4 ? 'cheer' : 'idle');
+
 // 可被拖动/暂停打断的等待
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -260,7 +263,7 @@ async function behaviorLoop() {
     if (paused)   { await waitUntil(() => !paused);   continue; }
     if (emoting)  { await waitUntil(() => !emoting);  continue; }
 
-    sendState({ clip: 'idle' });
+    sendState({ clip: idleClip() });
     await sleep(randomBetween(3000, 7000));
     if (dragging || paused || emoting) continue;
 
@@ -272,7 +275,7 @@ async function behaviorLoop() {
     await walkTo(target);
     if (dragging || paused || emoting) continue;
 
-    sendState({ clip: 'idle' });
+    sendState({ clip: idleClip() });
     await sleep(randomBetween(800, 1600));
     if (dragging || paused || emoting) continue;
 
