@@ -39,6 +39,18 @@ let bubbleFollowTimer = null;    // 让气泡持续跟随桌宠
 let chatWin = null;              // 聊天窗口
 let settingsWin = null;          // 设置窗口
 
+let talkWin = null;              // 宠物下方的快捷输入条
+let talkFollowTimer = null;
+let talking = false;             // 正在聊天（聚焦输入或等回复）时停下走动
+let talkFocused = false;
+let replying = false;
+let replyLinger = 6000;          // 回复打完后气泡停留多久（按长短动态调整）
+const talkHistory = [];          // 贴身聊天的对话历史
+
+function updateTalking() {
+  talking = talkFocused || replying;
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 160,
@@ -71,6 +83,8 @@ function createWindow() {
 
   win.loadFile('index.html');
   win.webContents.on('did-finish-load', behaviorLoop);
+
+  createTalkBar();   // 宠物下方的快捷输入条
 }
 
 // 冻结/恢复（动画交给画面，走路在 behaviorLoop 里）
@@ -138,12 +152,15 @@ function openSettings() {
   settingsWin.loadFile('settings.html');
 }
 
-// ---- "打招呼"气泡窗口 ----
+// ---- 桌宠头顶气泡窗口（打招呼 + 贴身聊天回复共用）----
+const BUBBLE_W = 260;
+const BUBBLE_H = 170;
+
 function ensureBubble() {
   if (bubbleWin && !bubbleWin.isDestroyed()) return;
   bubbleWin = new BrowserWindow({
-    width: 220,
-    height: 90,
+    width: BUBBLE_W,
+    height: BUBBLE_H,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -159,41 +176,150 @@ function ensureBubble() {
   bubbleWin.loadFile('bubble.html');
 }
 
-// 把气泡摆到桌宠正上方
+// 给气泡发消息（窗口还在加载就等加载完）
+function bubbleSend(channel, payload) {
+  if (!bubbleWin || bubbleWin.isDestroyed()) return;
+  const wc = bubbleWin.webContents;
+  if (wc.isLoading()) wc.once('did-finish-load', () => wc.send(channel, payload));
+  else wc.send(channel, payload);
+}
+
+// 把气泡摆到桌宠正上方（气泡底部贴近头顶）
 function positionBubble() {
   if (!win || win.isDestroyed() || !bubbleWin || bubbleWin.isDestroyed()) return;
   const [px, py] = win.getPosition();
-  const bw = 220;
-  bubbleWin.setPosition(Math.round(px + 80 - bw / 2), Math.round(py - 30));
+  bubbleWin.setPosition(Math.round(px + 80 - BUBBLE_W / 2), Math.round(py + 20 - BUBBLE_H));
+}
+
+function startBubbleFollow() {
+  positionBubble();
+  if (bubbleFollowTimer) clearInterval(bubbleFollowTimer);
+  bubbleFollowTimer = setInterval(positionBubble, 16);
+}
+
+function hideBubble() {
+  if (bubbleFollowTimer) { clearInterval(bubbleFollowTimer); bubbleFollowTimer = null; }
+  if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.hide();
 }
 
 function showGreeting(text) {
   if (!win || win.isDestroyed()) return;
   ensureBubble();
-  positionBubble();
-
-  const send = () => bubbleWin.webContents.send('bubble-text', text);
-  if (bubbleWin.webContents.isLoading()) {
-    bubbleWin.webContents.once('did-finish-load', send);
-  } else {
-    send();
-  }
-  bubbleWin.showInactive();      // 显示但不抢焦点
-
-  // 显示期间持续跟随桌宠移动
-  if (bubbleFollowTimer) clearInterval(bubbleFollowTimer);
-  bubbleFollowTimer = setInterval(positionBubble, 16);
-
+  bubbleSend('bubble-text', text);
+  bubbleWin.showInactive();
+  startBubbleFollow();
   if (bubbleTimer) clearTimeout(bubbleTimer);
-  bubbleTimer = setTimeout(() => {
-    if (bubbleFollowTimer) { clearInterval(bubbleFollowTimer); bubbleFollowTimer = null; }
-    if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.hide();
-  }, 2500);
+  bubbleTimer = setTimeout(hideBubble, 2500);
 }
 
 function sendState(state) {
   if (win && !win.isDestroyed()) {
     win.webContents.send('pet-state', state);
+  }
+}
+
+// ---- 宠物下方的快捷输入条 ----
+const TALK_W = 240;
+const TALK_H = 56;
+
+function positionTalk() {
+  if (!win || win.isDestroyed() || !talkWin || talkWin.isDestroyed()) return;
+  const [px, py] = win.getPosition();
+  talkWin.setPosition(Math.round(px + 80 - TALK_W / 2), Math.round(py + 150));
+}
+
+function createTalkBar() {
+  talkWin = new BrowserWindow({
+    width: TALK_W,
+    height: TALK_H,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'talk-preload.js'),
+    },
+  });
+  talkWin.loadFile('talk.html');
+  talkWin.once('ready-to-show', () => {
+    positionTalk();
+    talkWin.showInactive();      // 显示但不抢焦点
+  });
+  if (talkFollowTimer) clearInterval(talkFollowTimer);
+  talkFollowTimer = setInterval(positionTalk, 16);   // 始终跟随宠物
+}
+
+// 贴身聊天：把 AI 回复以流式打字机显示在头顶气泡里
+async function streamChatToBubble(messages) {
+  ensureBubble();
+  bubbleSend('bubble-reset');
+  bubbleWin.showInactive();
+  startBubbleFollow();
+  if (bubbleTimer) clearTimeout(bubbleTimer);   // 取消打招呼的自动收起
+
+  const cfg = loadConfig();
+  if (!cfg.apiKey) {
+    replyLinger = 7000;
+    bubbleSend('bubble-error', '先点右键「设置」填一下 API Key 哦～');
+    return;
+  }
+
+  try {
+    const url = cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cfg.apiKey}`,
+        'HTTP-Referer': 'https://desk-pet.local',
+        'X-Title': 'Desk Pet',
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [SYSTEM_PROMPT, ...messages],
+        stream: true,
+        max_tokens: 150,        // 贴身气泡，回复简短一点
+      }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      bubbleSend('bubble-error', `出错了(${res.status})：${detail.slice(0, 120)}`);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const delta = JSON.parse(data).choices?.[0]?.delta?.content;
+          if (delta) { full += delta; bubbleSend('bubble-chunk', delta); }
+        } catch { /* 半个 JSON，忽略 */ }
+      }
+    }
+    if (full) talkHistory.push({ role: 'assistant', content: full });
+    // 回复越长留得越久：至少 5 秒，每个字 +90ms，最多 15 秒
+    replyLinger = Math.min(15000, Math.max(5000, full.length * 90));
+    bubbleSend('bubble-done');
+  } catch (err) {
+    replyLinger = 7000;
+    bubbleSend('bubble-error', `呜…网络出错了：${err.message || err}`);
   }
 }
 
@@ -208,7 +334,7 @@ function sleep(ms) {
     let elapsed = 0;
     const step = 100;
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || dragging || paused || emoting) {
+      if (!win || win.isDestroyed() || dragging || paused || emoting || talking) {
         clearInterval(timer);
         return resolve();
       }
@@ -236,7 +362,7 @@ function waitUntil(predicate) {
 function walkTo(targetX, speed = 2, stepMs = 16) {
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!win || win.isDestroyed() || dragging || paused || emoting) {
+      if (!win || win.isDestroyed() || dragging || paused || emoting || talking) {
         clearInterval(timer);
         return resolve();
       }
@@ -262,10 +388,11 @@ async function behaviorLoop() {
     if (dragging) { await waitUntil(() => !dragging); continue; }
     if (paused)   { await waitUntil(() => !paused);   continue; }
     if (emoting)  { await waitUntil(() => !emoting);  continue; }
+    if (talking)  { await waitUntil(() => !talking);  continue; }
 
     sendState({ clip: idleClip() });
     await sleep(randomBetween(3000, 7000));
-    if (dragging || paused || emoting) continue;
+    if (dragging || paused || emoting || talking) continue;
 
     const dir = Math.random() < 0.5 ? -1 : 1;
     const distance = randomBetween(120, 320);
@@ -273,11 +400,11 @@ async function behaviorLoop() {
 
     sendState({ clip: 'walk', facing: target >= startPos.x ? 1 : -1 });
     await walkTo(target);
-    if (dragging || paused || emoting) continue;
+    if (dragging || paused || emoting || talking) continue;
 
     sendState({ clip: idleClip() });
     await sleep(randomBetween(800, 1600));
-    if (dragging || paused || emoting) continue;
+    if (dragging || paused || emoting || talking) continue;
 
     sendState({ clip: 'walk', facing: startPos.x >= target ? 1 : -1 });
     await walkTo(startPos.x);
@@ -380,6 +507,38 @@ ipcMain.on('chat-message', (event, messages) => {
 
 ipcMain.on('chat-close', () => {
   if (chatWin && !chatWin.isDestroyed()) chatWin.hide();
+});
+
+// ---- 宠物下方快捷输入条 ----
+ipcMain.on('talk-focus', () => {
+  talkFocused = true;
+  updateTalking();
+  sendState({ clip: 'idle' });   // 站好听你说话
+});
+
+ipcMain.on('talk-blur', () => {
+  talkFocused = false;
+  updateTalking();
+});
+
+ipcMain.on('talk-send', (_event, text) => {
+  const t = (text || '').trim();
+  if (!t || !win || win.isDestroyed()) return;
+  talkHistory.push({ role: 'user', content: t });
+  replying = true;
+  updateTalking();
+  sendState({ clip: 'idle' });
+  streamChatToBubble(talkHistory);
+});
+
+// 气泡把字吐完后：停留一会儿再收起，并恢复走动
+ipcMain.on('bubble-typed', () => {
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => {
+    hideBubble();
+    replying = false;
+    updateTalking();
+  }, replyLinger);
 });
 
 // ---- 设置 ----

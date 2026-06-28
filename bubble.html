@@ -4,31 +4,29 @@
   <meta charset="UTF-8" />
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      background: transparent;
-      overflow: hidden;
+      margin: 0; padding: 0; height: 100%;
+      background: transparent; overflow: hidden;
       display: flex;
-      align-items: flex-start;
+      align-items: flex-end;        /* 气泡贴近底部，向上生长 */
       justify-content: center;
     }
 
     .bubble {
       position: relative;
-      margin-top: 8px;
-      max-width: 200px;
+      margin-bottom: 14px;
+      max-width: 232px;
       background: #ffffff;
       color: #444;
       border: 2px solid #e7a9a9;
-      border-radius: 14px;
-      padding: 8px 14px;
-      font: 16px/1.3 -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-      white-space: nowrap;
-      -webkit-user-select: none;
-      user-select: none;
+      border-radius: 16px;
+      padding: 9px 13px;
+      font: 15px/1.4 -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      word-break: break-word;
+      -webkit-user-select: none; user-select: none;
     }
+    .bubble:empty { display: none; }            /* 没内容时不显示空框 */
+    .bubble.err { border-color: #e0b0b0; color: #c0392b; }
 
     /* 下方小尾巴，指向桌宠 */
     .bubble::after {
@@ -47,7 +45,48 @@
   <div class="bubble" id="bubble"></div>
   <script>
     const el = document.getElementById('bubble');
-    window.bubbleAPI.onText((text) => { el.textContent = text; });
+
+    let pending = '';      // 待显示的字
+    let text = '';         // 已显示的字
+    let ended = false;     // 网络流是否已结束
+    let typer = null;
+
+    function stopTyper() { if (typer) { clearInterval(typer); typer = null; } }
+
+    function startTyper() {
+      if (typer) return;
+      typer = setInterval(() => {
+        if (pending.length > 0) {
+          text += pending[0];
+          pending = pending.slice(1);
+          el.textContent = text;
+        } else if (ended) {
+          stopTyper();
+          window.bubbleAPI.typed();   // 字吐完了，通知主进程
+        }
+      }, 22);
+    }
+
+    // 打招呼：直接显示静态文字
+    window.bubbleAPI.onText((t) => {
+      stopTyper(); pending = ''; ended = false; text = t;
+      el.classList.remove('err'); el.textContent = t;
+    });
+
+    // 贴身聊天：流式 + 打字机
+    window.bubbleAPI.onReset(() => {
+      stopTyper(); pending = ''; text = ''; ended = false;
+      el.classList.remove('err'); el.textContent = '';
+    });
+    window.bubbleAPI.onChunk((delta) => {
+      el.classList.remove('err'); pending += delta; startTyper();
+    });
+    window.bubbleAPI.onDone(() => { ended = true; startTyper(); });
+    window.bubbleAPI.onError((msg) => {
+      stopTyper(); pending = ''; ended = false; text = msg;
+      el.classList.add('err'); el.textContent = msg;
+      window.bubbleAPI.typed();
+    });
   </script>
 </body>
 </html>
