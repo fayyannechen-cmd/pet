@@ -1,6 +1,7 @@
 const { app, BrowserWindow, screen, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 
 // 桌宠窗口尺寸（改这里即可整体等比缩放）
 const PET = 120;
@@ -65,6 +66,33 @@ function extractMemo(text) {
   const i = (text || '').indexOf(MEMO_TRIGGER);
   if (i === -1) return null;
   return text.slice(i + MEMO_TRIGGER.length).replace(/^[\s:：,，、.。!！~～-]+/, '').trim();
+}
+
+// ---- 当前运行的任务（前台程序）----
+function run(cmd, args) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: 3000 }, (err, stdout) => resolve(err ? '' : stdout));
+  });
+}
+// 取当前前台程序名（无需任何系统授权）
+async function frontApp() {
+  const asn = (await run('/usr/bin/lsappinfo', ['front'])).trim();
+  if (!asn) return '';
+  const info = await run('/usr/bin/lsappinfo', ['info', '-only', 'name', asn]);
+  const m = info.match(/="([^"]*)"/);   // 形如 "LSDisplayName"="Code"
+  return m ? m[1] : '';
+}
+
+// 每隔几秒看一眼前台任务，变了就自动在气泡里提示（不打断其它气泡 / 不打断走动）
+let lastTask = '';
+async function checkTask() {
+  if (!win || win.isDestroyed()) return;
+  const name = await frontApp();
+  if (!name || /electron|desk-?pet/i.test(name)) return;   // 忽略宠物自己
+  if (name === lastTask) return;
+  lastTask = name;
+  if (dragging || paused || emoting || talking || replying) return;  // 别盖掉聊天等气泡
+  sayInBubble(`🏃「${name}」运行中～`, 8000);
 }
 
 let win;
@@ -133,6 +161,8 @@ function createWindow() {
 
   createTalkBar();   // 宠物下方的快捷输入条
   createNoteIcon();  // 宠物右上角的备忘录图标
+
+  setInterval(checkTask, 5000);   // 每 5 秒看一眼前台任务，变了就自动提示
 }
 
 // 冻结/恢复（动画交给画面，走路在 behaviorLoop 里）
@@ -363,14 +393,14 @@ function openMemo() {
   memoWin.loadFile('memo.html');
 }
 
-// 在头顶气泡里说一句话（复用打字机 + 停留逻辑）
-function sayInBubble(text) {
+// 在头顶气泡里说一句话（复用打字机 + 停留逻辑）；linger 可指定停留时长
+function sayInBubble(text, linger) {
   ensureBubble();
   bubbleSend('bubble-reset');
   bubbleWin.showInactive();
   startBubbleFollow();
   if (bubbleTimer) clearTimeout(bubbleTimer);
-  replyLinger = Math.min(15000, Math.max(5000, text.length * 90));
+  replyLinger = linger || Math.min(15000, Math.max(5000, text.length * 90));
   bubbleSend('bubble-chunk', text);
   bubbleSend('bubble-done');
 }
