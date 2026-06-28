@@ -28,6 +28,45 @@ function saveConfig(partial) {
   return merged;
 }
 
+// ---- 备忘录存储（同样在用户数据目录，不进 Git）----
+function memosPath() {
+  return path.join(app.getPath('userData'), 'memos.json');
+}
+function loadMemos() {
+  try {
+    const list = JSON.parse(fs.readFileSync(memosPath(), 'utf8'));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+function saveMemos(list) {
+  fs.writeFileSync(memosPath(), JSON.stringify(list, null, 2));
+}
+function addMemo(text) {
+  const list = loadMemos();
+  list.unshift({ id: Date.now(), text, time: Date.now() });
+  saveMemos(list);
+  return list;
+}
+function deleteMemo(id) {
+  const list = loadMemos().filter((m) => m.id !== id);
+  saveMemos(list);
+  return list;
+}
+// 备忘录窗口若开着，推送最新列表
+function pushMemoList() {
+  if (memoWin && !memoWin.isDestroyed()) memoWin.webContents.send('memo-list', loadMemos());
+}
+
+// 从聊天文字里解析「添加到备忘录 xxx」，返回要记的内容；不是该指令则返回 null
+const MEMO_TRIGGER = '添加到备忘录';
+function extractMemo(text) {
+  const i = (text || '').indexOf(MEMO_TRIGGER);
+  if (i === -1) return null;
+  return text.slice(i + MEMO_TRIGGER.length).replace(/^[\s:：,，、.。!！~～-]+/, '').trim();
+}
+
 let win;
 let startPos = { x: 0, y: 0 };   // 桌宠的"家"，走完要回到这里
 let dragging = false;            // 是否正在被拖动（拖动时暂停自动走路）
@@ -42,6 +81,10 @@ let bubbleTimer = null;
 let bubbleFollowTimer = null;    // 让气泡持续跟随桌宠
 let chatWin = null;              // 聊天窗口
 let settingsWin = null;          // 设置窗口
+
+let noteIconWin = null;          // 宠物右上角的粉色笔记本图标
+let noteIconFollowTimer = null;
+let memoWin = null;              // 备忘录窗口
 
 let talkWin = null;              // 宠物下方的快捷输入条
 let talkFollowTimer = null;
@@ -89,6 +132,7 @@ function createWindow() {
   win.webContents.on('did-finish-load', behaviorLoop);
 
   createTalkBar();   // 宠物下方的快捷输入条
+  createNoteIcon();  // 宠物右上角的备忘录图标
 }
 
 // 冻结/恢复（动画交给画面，走路在 behaviorLoop 里）
@@ -103,6 +147,7 @@ function popupMenu() {
   const menu = Menu.buildFromTemplate([
     { label: '打招呼', click: () => showGreeting('你好鸭～❤️') },
     { label: '聊天…', click: openChat },
+    { label: '📝 备忘录', click: openMemo },
     { label: '设置…', click: openSettings },
     { label: paused ? '继续' : '暂停', click: () => setPaused(!paused) },
     { type: 'separator' },
@@ -254,6 +299,80 @@ function createTalkBar() {
   });
   if (talkFollowTimer) clearInterval(talkFollowTimer);
   talkFollowTimer = setInterval(positionTalk, 16);   // 始终跟随宠物
+}
+
+// ---- 宠物右上角的粉色笔记本图标 ----
+const ICON_W = 32;
+const ICON_H = 36;
+
+function positionNoteIcon() {
+  if (!win || win.isDestroyed() || !noteIconWin || noteIconWin.isDestroyed()) return;
+  const [px, py] = win.getPosition();
+  // 放在宠物右侧外缘，不和宠物身体重叠
+  noteIconWin.setPosition(Math.round(px + PET - 2), Math.round(py + 6));
+}
+
+function createNoteIcon() {
+  noteIconWin = new BrowserWindow({
+    width: ICON_W,
+    height: ICON_H,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'note-icon-preload.js'),
+    },
+  });
+  noteIconWin.loadFile('note-icon.html');
+  noteIconWin.once('ready-to-show', () => {
+    positionNoteIcon();
+    noteIconWin.showInactive();
+  });
+  if (noteIconFollowTimer) clearInterval(noteIconFollowTimer);
+  noteIconFollowTimer = setInterval(positionNoteIcon, 16);
+}
+
+// ---- 备忘录窗口（双击图标 / 右键菜单打开，置顶在屏幕左上角）----
+function openMemo() {
+  if (memoWin && !memoWin.isDestroyed()) {
+    memoWin.show();
+    memoWin.focus();
+    return;
+  }
+  const work = screen.getPrimaryDisplay().workArea;
+  memoWin = new BrowserWindow({
+    width: 320,
+    height: 440,
+    x: work.x + 24,
+    y: work.y + 24,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,           // 置顶
+    resizable: true,
+    minWidth: 260,
+    minHeight: 320,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'memo-preload.js'),
+    },
+  });
+  memoWin.loadFile('memo.html');
+}
+
+// 在头顶气泡里说一句话（复用打字机 + 停留逻辑）
+function sayInBubble(text) {
+  ensureBubble();
+  bubbleSend('bubble-reset');
+  bubbleWin.showInactive();
+  startBubbleFollow();
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  replyLinger = Math.min(15000, Math.max(5000, text.length * 90));
+  bubbleSend('bubble-chunk', text);
+  bubbleSend('bubble-done');
 }
 
 // 贴身聊天：把 AI 回复以流式打字机显示在头顶气泡里
@@ -512,6 +631,18 @@ async function streamChat(sender, messages) {
 }
 
 ipcMain.on('chat-message', (event, messages) => {
+  // 「添加到备忘录 xxx」：直接记录，不走 AI
+  const last = messages[messages.length - 1]?.content || '';
+  const note = extractMemo(last);
+  if (note !== null) {
+    const reply = note
+      ? `已添加到备忘录📝：${note}`
+      : '要记点什么呢？在「添加到备忘录」后面写上内容～';
+    if (note) { addMemo(note); pushMemoList(); }
+    event.sender.send('chat-stream', { type: 'chunk', text: reply });
+    event.sender.send('chat-stream', { type: 'done' });
+    return;
+  }
   streamChat(event.sender, messages);
 });
 
@@ -534,11 +665,40 @@ ipcMain.on('talk-blur', () => {
 ipcMain.on('talk-send', (_event, text) => {
   const t = (text || '').trim();
   if (!t || !win || win.isDestroyed()) return;
+
+  // 「添加到备忘录 xxx」：直接记录，不走 AI
+  const note = extractMemo(t);
+  if (note !== null) {
+    replying = true;
+    updateTalking();
+    sendState({ clip: 'idle' });
+    if (note) {
+      addMemo(note);
+      pushMemoList();
+      sayInBubble(`好嘞，已记到备忘录📝：${note}`);
+    } else {
+      sayInBubble('要记点什么呢？在「添加到备忘录」后面写上内容～');
+    }
+    return;
+  }
+
   talkHistory.push({ role: 'user', content: t });
   replying = true;
   updateTalking();
   sendState({ clip: 'idle' });
   streamChatToBubble(talkHistory);
+});
+
+// ---- 备忘录 ----
+ipcMain.on('open-memo', openMemo);                 // 双击粉色笔记本图标
+ipcMain.handle('memo-get', () => loadMemos());
+ipcMain.on('memo-add', (_e, text) => {
+  const t = (text || '').trim();
+  if (t) { addMemo(t); pushMemoList(); }
+});
+ipcMain.on('memo-del', (_e, id) => { deleteMemo(id); pushMemoList(); });
+ipcMain.on('memo-close', () => {
+  if (memoWin && !memoWin.isDestroyed()) memoWin.hide();
 });
 
 // 气泡把字吐完后：停留一会儿再收起，并恢复走动
